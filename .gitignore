@@ -1,0 +1,7 @@
+config.*.js
+!config.js
+*.cfg
+!device.cfg
+eslint.config.mjs
+node_modules
+package-lock.json

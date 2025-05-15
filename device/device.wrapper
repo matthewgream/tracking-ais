@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+if [ -z "$1" ]; then
+  echo "config file not provided"
+  exit 1
+fi
+if [ -f "$1" ]; then
+  . "$1"
+else
+  echo "config file $1 not found"
+  exit 1
+fi
+${COMMAND:-/usr/local/bin/AIS-catcher} ${SOURCE} ${SOURCE_OPTS} ${DISPLAY} ${REPORT} ${OTHER} ${OUTPUTS}
