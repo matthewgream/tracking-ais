@@ -1,0 +1,187 @@
+#!/bin/bash
+
+# This script formats AIS MQTT data into a pipe-separated table
+# Usage: mosquitto_sub -t "ais/#" | ./ais-format.sh [options]
+#
+# Options:
+#   -s, --strong-signal   Show only strong signals (signalpower > threshold)
+#   -t, --type TYPE       Show only specific message types (comma-separated)
+#   -d, --debug           Show raw JSON lines before processing
+
+STRONG_SIGNAL_ONLY=false
+SIGNAL_THRESHOLD=500
+TYPE_FILTER=""
+DEBUG=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    -s | --strong-signal)
+        STRONG_SIGNAL_ONLY=true
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+            SIGNAL_THRESHOLD=$2
+            shift
+        fi
+        shift
+        ;;
+    -t | --type)
+        TYPE_FILTER="$2"
+        shift 2
+        ;;
+    -d | --debug)
+        DEBUG=true
+        shift
+        ;;
+    *)
+        shift
+        ;;
+    esac
+done
+
+SELECTED_OPTIONS=""
+if [[ "$STRONG_SIGNAL_ONLY" == "true" ]]; then
+    SELECTED_OPTIONS="${SELECTED_OPTIONS}strong-signal (threshold: ${SIGNAL_THRESHOLD}), "
+fi
+if [[ ! -z "$TYPE_FILTER" ]]; then
+    SELECTED_OPTIONS="${SELECTED_OPTIONS}type-filter (${TYPE_FILTER}), "
+fi
+if [[ "$DEBUG" == "true" ]]; then
+    SELECTED_OPTIONS="${SELECTED_OPTIONS}debug, "
+fi
+
+if [[ ! -z "$SELECTED_OPTIONS" ]]; then
+    SELECTED_OPTIONS="${SELECTED_OPTIONS%, }"
+    echo -e "\033[1;35mSelected options: ${SELECTED_OPTIONS}\033[0m"
+fi
+
+printf "%-19s | %-7s | %-10s | %-6s | %-6s | %-9s | %-23s | %-15s | %s\n" \
+    "TIME" "CHANNEL" "SIGNAL" "TYPE" "REPEAT" "MMSI" "POSITION" "EPFD" "DETAILS"
+echo "----------------------------------------------------------------------------------------------------------------------------------------------------------------------------"
+
+while IFS= read -r line; do
+    if [[ "$DEBUG" == "true" ]]; then
+        echo -e "\033[1;36mLINE: ${line}\033[0m"
+    fi
+
+    payload="$line"
+    
+    if ! echo "$payload" | jq -e . >/dev/null 2>&1; then
+        if [[ "$DEBUG" == "true" ]]; then
+            echo -e "\033[1;31mINVALID JSON: ${payload}\033[0m"
+        fi
+        continue
+    fi
+    
+    if [[ -z "$payload" || "$payload" == "{}" ]]; then
+        continue
+    fi
+
+    rxtime=$(echo "$payload" | jq -r '.rxtime // "-"' 2>/dev/null)
+    formatted_time=""
+    if [[ "$rxtime" =~ ^[0-9]{14}$ ]]; then
+        formatted_time="${rxtime:8:2}:${rxtime:10:2}:${rxtime:12:2}"
+    else
+        formatted_time="$rxtime"
+    fi
+    
+    channel=$(echo "$payload" | jq -r '.channel // "-"' 2>/dev/null)
+    signalpower=$(echo "$payload" | jq -r '.signalpower // 0' 2>/dev/null)
+    ppm=$(echo "$payload" | jq -r '.ppm // 0' 2>/dev/null)
+    type=$(echo "$payload" | jq -r '.type // "-"' 2>/dev/null)
+    repeat=$(echo "$payload" | jq -r '.repeat // "-"' 2>/dev/null)
+    mmsi=$(echo "$payload" | jq -r '.mmsi // "-"' 2>/dev/null)
+    
+    if [[ "$STRONG_SIGNAL_ONLY" == "true" ]]; then
+        signal_int=${signalpower%.*}
+        if [[ -z "$signal_int" || "$signal_int" == "" ]]; then
+            signal_int=0
+        fi
+        if (( signal_int < SIGNAL_THRESHOLD )); then
+            continue
+        fi
+    fi
+    
+    if [[ ! -z "$TYPE_FILTER" ]]; then
+        if ! echo ",$TYPE_FILTER," | grep -q ",$type,"; then
+            continue
+        fi
+    fi
+
+    lon=$(echo "$payload" | jq -r '.lon // "-"' 2>/dev/null)
+    lat=$(echo "$payload" | jq -r '.lat // "-"' 2>/dev/null)
+    position="$lon $lat"
+    
+    epfd_text=$(echo "$payload" | jq -r '.epfd_text // "-"' 2>/dev/null)
+    
+    signal_int=${signalpower%.*}
+    ppm_int=${ppm%.*}
+    if [[ -z "$signal_int" || "$signal_int" == "" ]]; then
+        signal_int=0
+    fi
+    if [[ -z "$ppm_int" || "$ppm_int" == "" ]]; then
+        ppm_int=0
+    fi
+    signal_display="${signal_int}/${ppm_int}"
+    
+    nmea_raw=$(echo "$payload" | jq -r '.nmea | join(" ") // "-"' 2>/dev/null)
+    
+    case $type in
+        1|2|3)
+            status=$(echo "$payload" | jq -r '.status_text // "-"' 2>/dev/null)
+            course=$(echo "$payload" | jq -r '.course // "-"' 2>/dev/null)
+            speed=$(echo "$payload" | jq -r '.speed // "-"' 2>/dev/null)
+            details="Status: $status, Course: $course°, Speed: $speed knots [$nmea_raw]"
+            ;;
+        4)
+            accuracy=$(echo "$payload" | jq -r 'if has("accuracy") then .accuracy | tostring else "-" end' 2>/dev/null)
+            raim=$(echo "$payload" | jq -r 'if has("raim") then .raim | tostring else "-" end' 2>/dev/null)
+            details="Base Station, Accuracy: $accuracy, RAIM: $raim [$nmea_raw]"
+            ;;
+        5)
+            shipname=$(echo "$payload" | jq -r '.shipname // "-"' 2>/dev/null)
+            shiptype=$(echo "$payload" | jq -r '.shiptype_text // "-"' 2>/dev/null)
+            destination=$(echo "$payload" | jq -r '.destination // "-"' 2>/dev/null)
+            details="$shipname, Type: $shiptype, Dest: $destination [$nmea_raw]"
+            ;;
+        8)
+            dac=$(echo "$payload" | jq -r '.dac // "-"' 2>/dev/null)
+            fid=$(echo "$payload" | jq -r '.fid // "-"' 2>/dev/null)
+            details="Binary Broadcast, DAC: $dac, FID: $fid [$nmea_raw]"
+            ;;
+        18|19)
+            speed=$(echo "$payload" | jq -r '.speed // "-"' 2>/dev/null)
+            course=$(echo "$payload" | jq -r '.course // "-"' 2>/dev/null)
+            details="Class B, Speed: $speed knots, Course: $course° [$nmea_raw]"
+            ;;
+        21)
+            name=$(echo "$payload" | jq -r '.name // "-"' 2>/dev/null)
+            aid_type=$(echo "$payload" | jq -r '.aid_type_text // "-"' 2>/dev/null)
+            details="NavAid: $name, Type: $aid_type [$nmea_raw]"
+            ;;
+        24)
+            shipname=$(echo "$payload" | jq -r '.shipname // "-"' 2>/dev/null)
+            vendorid=$(echo "$payload" | jq -r '.vendorid // "-"' 2>/dev/null)
+            details="Class B Static, Name: $shipname, Vendor: $vendorid [$nmea_raw]"
+            ;;
+        *)
+            radio=$(echo "$payload" | jq -r '.radio // "-"' 2>/dev/null)
+            details="Radio: $radio [$nmea_raw]"
+            ;;
+    esac
+
+    line_format="%-19s | %-7s | %-10s | %-6s | %-6s | %-9s | %-23s | %-15s | %s\n"
+    
+    if (( signal_int > 800 )); then
+        color_start="\033[1;32m"
+        color_end="\033[0m"
+    elif (( signal_int > 400 )); then
+        color_start=""
+        color_end=""
+    else
+        color_start="\033[1;33m"
+        color_end="\033[0m"
+    fi
+    
+    printf "${color_start}${line_format}${color_end}" \
+        "$formatted_time" "$channel" "$signal_display" "$type" "$repeat" "$mmsi" \
+        "$position" "$epfd_text" "$details"
+done
