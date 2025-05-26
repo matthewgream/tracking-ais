@@ -1,0 +1,5 @@
+
+udev rules for comar usb2ais device
+systemd service wrapper for ais-catcher using comar usb2ais device
+    - delivery to third-party services and localhost mqtt
+monitor to format mqtt messages
