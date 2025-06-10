@@ -12,6 +12,7 @@ TimeoutStopSec=15s
 KillMode=mixed
 Restart=on-failure
 RestartSec=5s
+SyslogIdentifier=ais-tracker
 
 
 [Install]

@@ -12,6 +12,7 @@ STRONG_SIGNAL_ONLY=false
 SIGNAL_THRESHOLD=500
 TYPE_FILTER=""
 DEBUG=false
+RAW=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -26,6 +27,10 @@ while [[ $# -gt 0 ]]; do
     -t | --type)
         TYPE_FILTER="$2"
         shift 2
+        ;;
+    -r | --raw)
+        RAW=true
+        shift
         ;;
     -d | --debug)
         DEBUG=true
@@ -121,50 +126,54 @@ while IFS= read -r line; do
         ppm_int=0
     fi
     signal_display="${signal_int}/${ppm_int}"
-    
-    nmea_raw=$(echo "$payload" | jq -r '.nmea | join(" ") // "-"' 2>/dev/null)
+
+    nmea_raw=""
+    if [[ "$RAW" == "true" ]]; then
+        nmea_raw=$(echo "$payload" | jq -r '.nmea | join(" ") // "-"' 2>/dev/null)
+        nmea_raw=" [${nmea_raw}]"
+    fi
     
     case $type in
         1|2|3)
             status=$(echo "$payload" | jq -r '.status_text // "-"' 2>/dev/null)
             course=$(echo "$payload" | jq -r '.course // "-"' 2>/dev/null)
             speed=$(echo "$payload" | jq -r '.speed // "-"' 2>/dev/null)
-            details="Status: $status, Course: $course°, Speed: $speed knots [$nmea_raw]"
+            details="Status: $status, Course: $course°, Speed: $speed knots"
             ;;
         4)
             accuracy=$(echo "$payload" | jq -r 'if has("accuracy") then .accuracy | tostring else "-" end' 2>/dev/null)
             raim=$(echo "$payload" | jq -r 'if has("raim") then .raim | tostring else "-" end' 2>/dev/null)
-            details="Base Station, Accuracy: $accuracy, RAIM: $raim [$nmea_raw]"
+            details="Base Station, Accuracy: $accuracy, RAIM: $raim"
             ;;
         5)
             shipname=$(echo "$payload" | jq -r '.shipname // "-"' 2>/dev/null)
             shiptype=$(echo "$payload" | jq -r '.shiptype_text // "-"' 2>/dev/null)
             destination=$(echo "$payload" | jq -r '.destination // "-"' 2>/dev/null)
-            details="$shipname, Type: $shiptype, Dest: $destination [$nmea_raw]"
+            details="$shipname, Type: $shiptype, Dest: $destination"
             ;;
         8)
             dac=$(echo "$payload" | jq -r '.dac // "-"' 2>/dev/null)
             fid=$(echo "$payload" | jq -r '.fid // "-"' 2>/dev/null)
-            details="Binary Broadcast, DAC: $dac, FID: $fid [$nmea_raw]"
+            details="Binary Broadcast, DAC: $dac, FID: $fid"
             ;;
         18|19)
             speed=$(echo "$payload" | jq -r '.speed // "-"' 2>/dev/null)
             course=$(echo "$payload" | jq -r '.course // "-"' 2>/dev/null)
-            details="Class B, Speed: $speed knots, Course: $course° [$nmea_raw]"
+            details="Class B, Speed: $speed knots, Course: $course°"
             ;;
         21)
             name=$(echo "$payload" | jq -r '.name // "-"' 2>/dev/null)
             aid_type=$(echo "$payload" | jq -r '.aid_type_text // "-"' 2>/dev/null)
-            details="NavAid: $name, Type: $aid_type [$nmea_raw]"
+            details="NavAid: $name, Type: $aid_type"
             ;;
         24)
             shipname=$(echo "$payload" | jq -r '.shipname // "-"' 2>/dev/null)
             vendorid=$(echo "$payload" | jq -r '.vendorid // "-"' 2>/dev/null)
-            details="Class B Static, Name: $shipname, Vendor: $vendorid [$nmea_raw]"
+            details="Class B Static, Name: $shipname, Vendor: $vendorid"
             ;;
         *)
             radio=$(echo "$payload" | jq -r '.radio // "-"' 2>/dev/null)
-            details="Radio: $radio [$nmea_raw]"
+            details="Radio: $radio"
             ;;
     esac
 
@@ -183,5 +192,5 @@ while IFS= read -r line; do
     
     printf "${color_start}${line_format}${color_end}" \
         "$formatted_time" "$channel" "$signal_display" "$type" "$repeat" "$mmsi" \
-        "$position" "$epfd_text" "$details"
+        "$position" "$epfd_text" "${details}${nmea_raw}"
 done
